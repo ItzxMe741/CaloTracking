@@ -65,8 +65,8 @@ export default function Header({
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <Search className="w-4 h-4 text-amber-500" />
-            <span>Tab 1: Tra Cứu & Quét AI</span>
+            <Search className="w-4 h-4 text-emerald-600" />
+            <span>Tab 1: Tra Cứu & Đánh Giá Calo</span>
           </button>
 
           <button

@@ -16,9 +16,14 @@ import {
   Scale,
   Utensils,
   CheckCircle2,
+  ThumbsUp,
+  AlertTriangle,
+  Award,
+  Zap,
 } from 'lucide-react';
 import { CATEGORIES } from '../data/defaultFoods';
 import { analyzeFoodWithAI } from '../services/aiService';
+import { evaluateFoodByCalories } from '../utils/foodEvaluator';
 
 const SAMPLE_PROMPTS = [
   '1 bát phở bò tái chín, 2 quẩy giòn và 1 quả trứng chần',
@@ -27,6 +32,15 @@ const SAMPLE_PROMPTS = [
   '1 đĩa salad ức gà sốt mè rang, 1 củ khoai lang luộc',
   '1 ly trà sữa trân châu đường đen 50% đường',
   '1 tô bún bò Huế đầy đủ giò chả nạm bò',
+];
+
+const CALORIE_FILTERS = [
+  { id: 'all', label: 'Tất cả mức Calo' },
+  { id: 'low', label: '🟢 Calo Thấp (< 300 kcal)' },
+  { id: 'medium', label: '🟡 Calo Vừa (300 - 550 kcal)' },
+  { id: 'high', label: '🔴 Calo Cao (> 550 kcal)' },
+  { id: 'high_protein', label: '💪 Giàu Đạm (> 25g)' },
+  { id: 'low_carb', label: '🥑 Low-Carb (< 15g Carb)' },
 ];
 
 export default function FoodLookupTab({
@@ -38,6 +52,7 @@ export default function FoodLookupTab({
 }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Tất cả');
+  const [selectedCaloFilter, setSelectedCaloFilter] = useState('all');
 
   // AI Scanner state
   const [aiPrompt, setAiPrompt] = useState('');
@@ -55,8 +70,8 @@ export default function FoodLookupTab({
   const [tempKey, setTempKey] = useState(apiKey || '');
   const [keySaved, setKeySaved] = useState(false);
 
-  // Selected food for portion calculation & quick add
-  const [selectedFood, setSelectedFood] = useState(null);
+  // Selected food for evaluation, portion calculation & quick add
+  const [selectedFood, setSelectedFood] = useState(() => allFoods[0] || null);
   const [portionMultiplier, setPortionMultiplier] = useState(1);
   const [targetMealForFood, setTargetMealForFood] = useState('lunch');
   const [foodAddedToast, setFoodAddedToast] = useState(false);
@@ -74,7 +89,7 @@ export default function FoodLookupTab({
     emoji: '🍲',
   });
 
-  // Filtered food list
+  // Filtered food list by Search + Category + Calorie Level
   const filteredFoods = useMemo(() => {
     return allFoods.filter((item) => {
       const matchName =
@@ -83,9 +98,41 @@ export default function FoodLookupTab({
       const matchCat =
         selectedCategory === 'Tất cả' ||
         (selectedCategory === 'Tự tạo' ? item.isCustom : item.category === selectedCategory);
-      return matchName && matchCat;
+
+      // Calorie rating filter
+      let matchCalo = true;
+      const cal = item.calories || 0;
+      const p = item.protein || 0;
+      const c = item.carbs || 0;
+
+      if (selectedCaloFilter === 'low') matchCalo = cal < 300;
+      else if (selectedCaloFilter === 'medium') matchCalo = cal >= 300 && cal <= 550;
+      else if (selectedCaloFilter === 'high') matchCalo = cal > 550;
+      else if (selectedCaloFilter === 'high_protein') matchCalo = p >= 25;
+      else if (selectedCaloFilter === 'low_carb') matchCalo = c <= 15;
+
+      return matchName && matchCat && matchCalo;
     });
-  }, [allFoods, searchTerm, selectedCategory]);
+  }, [allFoods, searchTerm, selectedCategory, selectedCaloFilter]);
+
+  // Current food evaluation
+  const evaluatedSelectedFood = useMemo(() => {
+    if (!selectedFood) return null;
+    const scaledFood = {
+      ...selectedFood,
+      calories: Math.round(selectedFood.calories * (Number(portionMultiplier) || 1)),
+      protein: Math.round(selectedFood.protein * (Number(portionMultiplier) || 1) * 10) / 10,
+      carbs: Math.round(selectedFood.carbs * (Number(portionMultiplier) || 1) * 10) / 10,
+      fat: Math.round(selectedFood.fat * (Number(portionMultiplier) || 1) * 10) / 10,
+    };
+    return evaluateFoodByCalories(scaledFood);
+  }, [selectedFood, portionMultiplier]);
+
+  // Evaluation for AI result
+  const evaluatedAiResult = useMemo(() => {
+    if (!aiResult) return null;
+    return evaluateFoodByCalories(aiResult);
+  }, [aiResult]);
 
   // Handle Image Upload for AI
   const handleImageChange = (e) => {
@@ -213,42 +260,206 @@ export default function FoodLookupTab({
 
   return (
     <div className="space-y-6">
-      {/* SECTION 1: AI CALORIE SCANNER (QUÉT CALO BẰNG AI) */}
-      <div className="bg-gradient-to-br from-amber-500/10 via-orange-500/5 to-white rounded-2xl p-4 sm:p-6 border border-amber-200/80 shadow-xs">
-        <div className="flex items-center justify-between mb-4">
+      {/* 🌟 HIGHLIGHT SECTION: BẢNG ĐÁNH GIÁ CHI TIẾT MÓN ĂN ĐANG CHỌN */}
+      {selectedFood && evaluatedSelectedFood && (
+        <div className="bg-gradient-to-br from-emerald-50 via-teal-50/50 to-white rounded-2xl p-4 sm:p-5 border-2 border-emerald-400 shadow-sm space-y-4 animate-in fade-in">
+          {/* Header & Nutri-Score */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-emerald-200/80 pb-3">
+            <div className="flex items-center gap-3">
+              <span className="text-4xl">{selectedFood.emoji || '🍲'}</span>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-lg font-bold text-slate-800">{selectedFood.name}</h3>
+                  <span
+                    className={`text-xs font-black px-2 py-0.5 rounded-md uppercase ${evaluatedSelectedFood.scoreColor}`}
+                    title={`Điểm Nutri-Score: ${evaluatedSelectedFood.score}`}
+                  >
+                    Điểm {evaluatedSelectedFood.score}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 mt-1">
+                  <span
+                    className={`text-xs font-bold px-2 py-0.5 rounded-full ${evaluatedSelectedFood.caloTier.bg} ${evaluatedSelectedFood.caloTier.color} border ${evaluatedSelectedFood.caloTier.border} flex items-center gap-1`}
+                  >
+                    <span className={`w-2 h-2 rounded-full ${evaluatedSelectedFood.caloTier.dot}`} />
+                    {evaluatedSelectedFood.caloTier.label}
+                  </span>
+                  <span className="text-xs text-slate-500">
+                    ({Math.round(selectedFood.calories * (Number(portionMultiplier) || 1))} kcal /{' '}
+                    {portionMultiplier} {selectedFood.servingUnit})
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Calorie Number Display */}
+            <div className="text-left sm:text-right bg-white sm:bg-transparent p-2.5 sm:p-0 rounded-xl border sm:border-0 border-emerald-200">
+              <span className="text-[11px] text-slate-500 font-semibold block">
+                Năng Lượng Khẩu Phần
+              </span>
+              <div className="text-2xl sm:text-3xl font-black text-emerald-700 leading-tight">
+                {Math.round(selectedFood.calories * (Number(portionMultiplier) || 1))}{' '}
+                <span className="text-xs font-normal text-slate-500">kcal</span>
+              </div>
+              <div className="text-[11px] text-slate-600 font-medium space-x-1.5 mt-0.5">
+                <span className="text-sky-700">
+                  P: {Math.round(selectedFood.protein * (Number(portionMultiplier) || 1) * 10) / 10}g
+                </span>
+                <span>•</span>
+                <span className="text-amber-700">
+                  C: {Math.round(selectedFood.carbs * (Number(portionMultiplier) || 1) * 10) / 10}g
+                </span>
+                <span>•</span>
+                <span className="text-rose-700">
+                  F: {Math.round(selectedFood.fat * (Number(portionMultiplier) || 1) * 10) / 10}g
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Fitness Suitability Tags */}
+          {evaluatedSelectedFood.suitability.length > 0 && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs font-bold text-slate-700 mr-1">Đánh giá phù hợp:</span>
+              {evaluatedSelectedFood.suitability.map((suit, idx) => (
+                <span
+                  key={idx}
+                  className={`text-xs font-semibold px-2.5 py-0.5 rounded-lg border border-slate-200/80 ${suit.badge}`}
+                >
+                  {suit.label}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Pros & Cons Nutritional Evaluation Box */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+            <div className="bg-white/90 p-3 rounded-xl border border-emerald-200 space-y-1.5">
+              <div className="font-bold text-emerald-800 flex items-center gap-1.5">
+                <ThumbsUp className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Ưu điểm dinh dưỡng:</span>
+              </div>
+              <ul className="space-y-1 text-slate-600 list-disc list-inside">
+                {evaluatedSelectedFood.pros.map((p, idx) => (
+                  <li key={idx}>{p}</li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="bg-white/90 p-3 rounded-xl border border-amber-200 space-y-1.5">
+              <div className="font-bold text-amber-800 flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                <span>Điểm cần lưu ý khi ăn:</span>
+              </div>
+              <ul className="space-y-1 text-slate-600 list-disc list-inside">
+                {evaluatedSelectedFood.cons.map((c, idx) => (
+                  <li key={idx}>{c}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+
+          {/* Portion Adjuster & Send to Tab 2 Diary */}
+          <div className="pt-2 border-t border-emerald-200/80 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <span className="text-xs font-bold text-slate-700">Khẩu phần:</span>
+              <div className="flex items-center gap-1">
+                {[0.5, 1, 1.5, 2].map((num) => (
+                  <button
+                    key={num}
+                    type="button"
+                    onClick={() => setPortionMultiplier(num)}
+                    className={`px-2 py-0.5 text-xs rounded-lg font-bold transition-all ${
+                      portionMultiplier === num
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    {num}
+                  </button>
+                ))}
+              </div>
+
+              <input
+                type="number"
+                step="0.1"
+                min="0.1"
+                value={portionMultiplier}
+                onChange={(e) => setPortionMultiplier(e.target.value)}
+                className="w-16 px-2 py-0.5 text-xs text-center bg-white border border-slate-200 rounded-lg font-bold"
+              />
+              <span className="text-xs text-slate-600">{selectedFood.servingUnit}</span>
+            </div>
+
+            <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+              <select
+                value={targetMealForFood}
+                onChange={(e) => setTargetMealForFood(e.target.value)}
+                className="px-2 py-1.5 text-xs bg-white border border-slate-200 rounded-xl font-semibold"
+              >
+                <option value="breakfast">Vào Bữa Sáng</option>
+                <option value="lunch">Vào Bữa Trưa</option>
+                <option value="dinner">Vào Bữa Tối</option>
+                <option value="snacks">Vào Bữa Phụ</option>
+              </select>
+
+              <button
+                onClick={handleAddSelectedFoodToDiary}
+                disabled={foodAddedToast}
+                className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs active:scale-95 transition-all flex items-center gap-1.5"
+              >
+                {foodAddedToast ? (
+                  <>
+                    <CheckCircle2 className="w-4 h-4 text-emerald-200" />
+                    <span>Đã thêm vào Tab 2!</span>
+                  </>
+                ) : (
+                  <>
+                    <Plus className="w-4 h-4" />
+                    <span>Lưu vào Nhật ký</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SECTION 2: AI CALORIE SCANNER (QUÉT & ĐÁNH GIÁ BẰNG AI) */}
+      <div className="bg-gradient-to-br from-amber-500/10 via-orange-500/5 to-white rounded-2xl p-4 sm:p-5 border border-amber-200/90 shadow-xs space-y-4">
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 to-orange-500 text-white flex items-center justify-center shadow-xs">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-500 to-orange-500 text-white flex items-center justify-center shadow-xs">
               <Sparkles className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-base sm:text-lg font-bold text-slate-800">
-                Trợ Lý AI Quét & Ước Tính Calo Món Ăn
+              <h2 className="text-base font-bold text-slate-800">
+                Trợ Lý AI Quét & Đánh Giá Calo Món Ăn Tức Thì
               </h2>
               <p className="text-xs text-slate-500">
-                Nhập tên/mô tả món ăn tự do hoặc chụp ảnh món ăn để AI phân tích ngay
+                Gõ tên/mô tả món ăn tự do hoặc tải ảnh chụp món ăn để AI đánh giá
               </p>
             </div>
           </div>
         </div>
 
-        {/* AI Input Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Text input & prompts */}
-          <div className="space-y-2">
+        {/* Input Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+          {/* Text Description Input */}
+          <div className="space-y-1.5">
             <label className="block text-xs font-bold text-slate-700">
-              1. Mô tả món ăn bạn ăn:
+              1. Nhập mô tả món ăn bạn ăn:
             </label>
             <textarea
               rows={3}
               placeholder="Ví dụ: 1 tô phở bò nhiều thịt tái, 2 quẩy và 1 quả trứng chần..."
               value={aiPrompt}
               onChange={(e) => setAiPrompt(e.target.value)}
-              className="w-full p-3 text-xs sm:text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500 resize-none shadow-2xs"
+              className="w-full p-2.5 text-xs sm:text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500 resize-none shadow-2xs"
             />
 
-            {/* Quick Sample Chips */}
-            <div className="flex flex-wrap gap-1.5 pt-1">
-              <span className="text-[11px] text-slate-400 self-center">Gợi ý thử:</span>
+            <div className="flex flex-wrap gap-1 pt-0.5">
+              <span className="text-[11px] text-slate-400 self-center">Gợi ý nhanh:</span>
               {SAMPLE_PROMPTS.slice(0, 3).map((prompt, idx) => (
                 <button
                   key={idx}
@@ -263,13 +474,13 @@ export default function FoodLookupTab({
           </div>
 
           {/* Photo Upload Box */}
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <label className="block text-xs font-bold text-slate-700">
-              2. Hoặc tải ảnh món ăn (Tùy chọn):
+              2. Hoặc tải ảnh chụp món ăn (Tùy chọn):
             </label>
 
             {imagePreview ? (
-              <div className="relative rounded-xl overflow-hidden border border-slate-200 bg-white h-[92px] sm:h-[105px] flex items-center justify-center">
+              <div className="relative rounded-xl overflow-hidden border border-slate-200 bg-white h-[92px] flex items-center justify-center">
                 <img
                   src={imagePreview}
                   alt="Ảnh món ăn"
@@ -288,10 +499,10 @@ export default function FoodLookupTab({
                 </button>
               </div>
             ) : (
-              <label className="border-2 border-dashed border-amber-300/80 hover:border-amber-500 rounded-xl p-3 h-[92px] sm:h-[105px] flex flex-col items-center justify-center cursor-pointer bg-white/70 hover:bg-amber-50/40 transition-all text-center">
-                <Camera className="w-6 h-6 text-amber-500 mb-1" />
+              <label className="border-2 border-dashed border-amber-300 hover:border-amber-500 rounded-xl p-3 h-[92px] flex flex-col items-center justify-center cursor-pointer bg-white/70 hover:bg-amber-50/40 transition-all text-center">
+                <Camera className="w-5 h-5 text-amber-500 mb-1" />
                 <span className="text-xs font-bold text-slate-700">Chụp ảnh hoặc Tải ảnh món ăn</span>
-                <span className="text-[10px] text-slate-400">Nhận diện bằng thị giác AI</span>
+                <span className="text-[10px] text-slate-400">AI nhận diện thị giác</span>
                 <input
                   type="file"
                   accept="image/*"
@@ -303,12 +514,12 @@ export default function FoodLookupTab({
           </div>
         </div>
 
-        {/* AI Action Button & Error */}
-        <div className="mt-3 flex flex-col sm:flex-row items-center gap-2.5">
+        {/* Buttons */}
+        <div className="flex flex-col sm:flex-row items-center gap-2">
           <button
             onClick={handleStartAiAnalysis}
             disabled={isAiLoading || (!aiPrompt.trim() && !imageBase64)}
-            className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold text-xs sm:text-sm shadow-md active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full sm:w-auto px-5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold text-xs sm:text-sm shadow-md active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isAiLoading ? (
               <>
@@ -318,12 +529,11 @@ export default function FoodLookupTab({
             ) : (
               <>
                 <Sparkles className="w-4 h-4" />
-                <span>Bấm Quét & Ước Tính Calo Ngay</span>
+                <span>Bắt Đầu Đánh Giá Bằng AI</span>
               </>
             )}
           </button>
 
-          {/* Gemini API Key Toggle */}
           <button
             type="button"
             onClick={() => setShowKeyConfig(!showKeyConfig)}
@@ -335,91 +545,97 @@ export default function FoodLookupTab({
           </button>
         </div>
 
-        {/* Key Configuration Box */}
+        {/* Gemini Key Drawer */}
         {showKeyConfig && (
-          <div className="mt-3 p-3 bg-white rounded-xl border border-slate-200 space-y-2 text-xs">
-            <p className="text-slate-500 leading-relaxed text-[11px]">
-              Nếu nhập API Key của Google Gemini, ứng dụng sẽ gọi mô hình Gemini Vision trực tiếp. Nếu để trống, ứng dụng sẽ tự động dùng <strong>bộ suy luận tiếng Việt thông minh tích hợp sẵn</strong> (không cần key vẫn dùng tốt).
+          <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-2 text-xs">
+            <p className="text-slate-500 text-[11px]">
+              Nếu có Google Gemini API Key riêng, bạn có thể nhập vào đây. Nếu không nhập, ứng dụng vẫn phân tích mượt mà bằng bộ máy suy luận tiếng Việt có sẵn.
             </p>
             <div className="flex gap-2">
               <input
                 type="password"
-                placeholder="Nhập API Key: AIzaSy..."
+                placeholder="AIzaSy..."
                 value={tempKey}
                 onChange={(e) => setTempKey(e.target.value)}
-                className="flex-1 px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500"
+                className="flex-1 px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg"
               />
               <button
                 type="button"
                 onClick={handleSaveApiKey}
-                className="px-3 py-1.5 bg-slate-800 text-white rounded-lg font-semibold hover:bg-black transition-colors"
+                className="px-3 py-1.5 bg-slate-800 text-white rounded-lg font-semibold hover:bg-black"
               >
                 Lưu Key
               </button>
             </div>
             {keySaved && (
-              <span className="text-[11px] text-emerald-600 font-bold block">
-                ✓ Đã lưu API Key an toàn!
-              </span>
+              <span className="text-[11px] text-emerald-600 font-bold block">✓ Đã lưu API Key!</span>
             )}
           </div>
         )}
 
         {aiError && (
-          <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-xs flex items-center gap-2">
+          <div className="p-2.5 bg-red-50 border border-red-200 rounded-xl text-red-700 text-xs flex items-center gap-2">
             <AlertCircle className="w-4 h-4 shrink-0" />
             <span>{aiError}</span>
           </div>
         )}
 
-        {/* AI Result Card */}
-        {aiResult && (
-          <div className="mt-4 bg-white border border-amber-300 rounded-xl p-4 space-y-3 shadow-sm animate-in zoom-in-95">
-            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+        {/* AI Result Card with Evaluation */}
+        {aiResult && evaluatedAiResult && (
+          <div className="bg-white border border-amber-300 rounded-xl p-4 space-y-3 shadow-sm animate-in zoom-in-95">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-2.5">
               <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
-                  {aiResult.isAiLive ? 'Kết Quả Gemini AI' : 'Bộ Máy Suy Luận Dinh Dưỡng'}
-                </span>
-                <h3 className="text-lg font-bold text-slate-800 mt-1">{aiResult.dishName}</h3>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
+                    {aiResult.isAiLive ? 'Gemini AI Vision' : 'Bộ Máy Suy Luận'}
+                  </span>
+                  <span
+                    className={`text-[10px] font-black px-1.5 py-0.5 rounded uppercase ${evaluatedAiResult.scoreColor}`}
+                  >
+                    Điểm {evaluatedAiResult.score}
+                  </span>
+                </div>
+                <h3 className="text-base font-bold text-slate-800 mt-1">{aiResult.dishName}</h3>
                 <p className="text-xs text-slate-500">{aiResult.estimatedServing}</p>
               </div>
 
               <div className="text-right">
-                <div className="text-3xl font-black text-amber-600">{aiResult.calories}</div>
+                <div className="text-2xl font-black text-amber-600">{aiResult.calories}</div>
                 <span className="text-[10px] text-slate-400 font-bold block -mt-1">KCAL</span>
               </div>
             </div>
 
-            {/* Macro breakdown */}
+            {/* Macro Stats */}
             <div className="grid grid-cols-3 gap-2 text-center text-xs">
-              <div className="bg-sky-50 border border-sky-100 rounded-lg p-2">
-                <span className="text-[10px] font-bold text-sky-800 block">Đạm (Protein)</span>
-                <span className="text-base font-extrabold text-sky-900">{aiResult.protein}g</span>
+              <div className="bg-sky-50 border border-sky-100 rounded-lg p-1.5">
+                <span className="text-[10px] font-bold text-sky-800 block">Đạm</span>
+                <span className="font-extrabold text-sky-900">{aiResult.protein}g</span>
               </div>
-              <div className="bg-amber-50 border border-amber-100 rounded-lg p-2">
-                <span className="text-[10px] font-bold text-amber-800 block">Tinh bột (Carb)</span>
-                <span className="text-base font-extrabold text-amber-900">{aiResult.carbs}g</span>
+              <div className="bg-amber-50 border border-amber-100 rounded-lg p-1.5">
+                <span className="text-[10px] font-bold text-amber-800 block">Tinh bột</span>
+                <span className="font-extrabold text-amber-900">{aiResult.carbs}g</span>
               </div>
-              <div className="bg-rose-50 border border-rose-100 rounded-lg p-2">
-                <span className="text-[10px] font-bold text-rose-800 block">Chất béo (Fat)</span>
-                <span className="text-base font-extrabold text-rose-900">{aiResult.fat}g</span>
+              <div className="bg-rose-50 border border-rose-100 rounded-lg p-1.5">
+                <span className="text-[10px] font-bold text-rose-800 block">Chất béo</span>
+                <span className="font-extrabold text-rose-900">{aiResult.fat}g</span>
               </div>
             </div>
 
+            {/* AI Nutrition Advice */}
             {aiResult.advice && (
               <div className="text-xs text-slate-600 bg-slate-50 p-2.5 rounded-lg border border-slate-100">
-                <strong>💡 Lời khuyên:</strong> {aiResult.advice}
+                <strong>💡 Lời khuyên dinh dưỡng:</strong> {aiResult.advice}
               </div>
             )}
 
-            {/* Add to Diary Action */}
+            {/* Quick Add */}
             <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-2 border-t border-slate-100">
-              <div className="flex items-center gap-2 w-full sm:w-auto">
-                <span className="text-xs text-slate-500 font-medium">Lưu vào bữa:</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500">Lưu vào:</span>
                 <select
                   value={targetMealForAi}
                   onChange={(e) => setTargetMealForAi(e.target.value)}
-                  className="px-2 py-1 text-xs bg-slate-100 border border-slate-200 rounded-lg font-semibold"
+                  className="px-2 py-1 text-xs bg-slate-100 rounded-lg font-semibold"
                 >
                   <option value="breakfast">Bữa Sáng</option>
                   <option value="lunch">Bữa Trưa</option>
@@ -431,17 +647,17 @@ export default function FoodLookupTab({
               <button
                 onClick={handleAddAiResultToDiary}
                 disabled={aiAddedToast}
-                className="w-full sm:w-auto px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5"
+                className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs active:scale-95 transition-all flex items-center gap-1.5"
               >
                 {aiAddedToast ? (
                   <>
                     <CheckCircle2 className="w-4 h-4 text-emerald-200" />
-                    <span>Đã thêm vào thực đơn Tab 2!</span>
+                    <span>Đã lưu vào Tab 2!</span>
                   </>
                 ) : (
                   <>
                     <Plus className="w-4 h-4" />
-                    <span>Thêm món này vào Nhật ký thực đơn</span>
+                    <span>Thêm vào Nhật ký</span>
                   </>
                 )}
               </button>
@@ -450,50 +666,77 @@ export default function FoodLookupTab({
         )}
       </div>
 
-      {/* SECTION 2: FOOD CALORIE SEARCH & LOOKUP LIBRARY */}
-      <div className="bg-white rounded-2xl p-4 sm:p-6 border border-slate-200 shadow-xs space-y-4">
+      {/* SECTION 3: THƯ VIỆN MÓN ĂN & BỘ LỌC ĐÁNH GIÁ THEO CALO */}
+      <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-xs space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
           <div>
             <h2 className="text-base sm:text-lg font-bold text-slate-800 flex items-center gap-2">
               <Search className="w-5 h-5 text-emerald-600" />
-              <span>Tra Cứu Calo Món Ăn Việt Nam</span>
+              <span>Tra Cứu & Đánh Giá Mức Calo Món Ăn</span>
             </h2>
             <p className="text-xs text-slate-500">
-              Tìm kiếm để xem ngay 1 phần chứa bao nhiêu calo, đạm, tinh bột, chất béo
+              Bấm vào từng món để xem đánh giá chi tiết, điểm Nutri-Score và độ phù hợp vóc dáng
             </p>
           </div>
 
           <button
             onClick={() => setIsCreatingCustom(true)}
-            className="px-3.5 py-1.5 text-xs font-bold rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors flex items-center gap-1.5 self-start sm:self-auto"
+            className="px-3 py-1.5 text-xs font-bold rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors flex items-center gap-1.5 self-start sm:self-auto"
           >
             <PlusCircle className="w-4 h-4" />
             <span>+ Tạo món của bạn</span>
           </button>
         </div>
 
-        {/* Search Bar & Category Filter */}
-        <div className="space-y-3">
-          <div className="relative">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              placeholder="Gõ tên món: phở bò, cơm tấm, bánh mì, ức gà, trà sữa, chuối..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-3 py-2.5 text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500"
-            />
-          </div>
+        {/* Search Bar */}
+        <div className="relative">
+          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            placeholder="Tìm kiếm: phở bò, cơm tấm, bún chả, ức gà, bánh mì, trà sữa..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-9 pr-3 py-2 text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+          />
+        </div>
 
+        {/* BỘ LỌC ĐÁNH GIÁ THEO MỨC ĐỘ CALO */}
+        <div>
+          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">
+            Lọc theo Đánh Giá Calo & Dinh Dưỡng:
+          </span>
+          <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none text-xs">
+            {CALORIE_FILTERS.map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => setSelectedCaloFilter(f.id)}
+                className={`px-3 py-1.5 rounded-lg shrink-0 font-bold transition-all ${
+                  selectedCaloFilter === f.id
+                    ? 'bg-slate-800 text-white shadow-2xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Category Pills */}
+        <div>
+          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">
+            Danh mục món ăn:
+          </span>
           <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none text-xs">
             {CATEGORIES.map((cat) => (
               <button
                 key={cat}
                 onClick={() => setSelectedCategory(cat)}
-                className={`px-3 py-1.5 rounded-lg shrink-0 font-medium transition-all ${
+                className={`px-2.5 py-1 rounded-lg shrink-0 font-medium transition-all ${
                   selectedCategory === cat
-                    ? 'bg-emerald-600 text-white shadow-2xs font-bold'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200/80'
+                    ? 'bg-emerald-600 text-white font-bold'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                 }`}
               >
                 {cat}
@@ -502,15 +745,17 @@ export default function FoodLookupTab({
           </div>
         </div>
 
-        {/* Food Items Catalog List */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[500px] overflow-y-auto pr-1">
+        {/* Food Items Catalog Grid with Calorie Badges */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[480px] overflow-y-auto pr-1">
           {filteredFoods.length === 0 ? (
             <div className="col-span-2 py-10 text-center text-slate-400 text-xs">
-              Không tìm thấy món ăn nào với từ khóa "{searchTerm}".
+              Không tìm thấy món ăn nào phù hợp với bộ lọc hiện tại.
             </div>
           ) : (
             filteredFoods.map((food) => {
               const isSelected = selectedFood?.id === food.id;
+              const evaluation = evaluateFoodByCalories(food);
+
               return (
                 <div
                   key={food.id}
@@ -521,10 +766,10 @@ export default function FoodLookupTab({
                   className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${
                     isSelected
                       ? 'bg-emerald-50/90 border-emerald-500 ring-2 ring-emerald-500/20 shadow-xs'
-                      : 'bg-slate-50/60 border-slate-200/80 hover:bg-slate-100/80'
+                      : 'bg-slate-50/70 border-slate-200/80 hover:bg-slate-100/90'
                   }`}
                 >
-                  <div className="flex items-center gap-3 min-w-0">
+                  <div className="flex items-center gap-2.5 min-w-0">
                     <span className="text-2xl shrink-0">{food.emoji || '🍲'}</span>
                     <div className="min-w-0">
                       <div className="text-xs sm:text-sm font-bold text-slate-800 truncate flex items-center gap-1.5">
@@ -535,12 +780,20 @@ export default function FoodLookupTab({
                           </span>
                         )}
                       </div>
-                      <div className="text-[11px] text-slate-400 mt-0.5 space-x-1.5">
-                        <span>1 {food.servingUnit}</span>
-                        <span>•</span>
-                        <span className="text-sky-600 font-medium">P: {food.protein}g</span>
-                        <span className="text-amber-600 font-medium">C: {food.carbs}g</span>
-                        <span className="text-rose-600 font-medium">F: {food.fat}g</span>
+
+                      {/* Calorie Tier & Nutri-Score Badges */}
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <span
+                          className={`text-[10px] font-black px-1.5 py-0.2 rounded uppercase ${evaluation.scoreColor}`}
+                        >
+                          {evaluation.score}
+                        </span>
+                        <span
+                          className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${evaluation.caloTier.bg} ${evaluation.caloTier.color}`}
+                        >
+                          {evaluation.caloTier.label}
+                        </span>
+                        <span className="text-[10px] text-slate-400">1 {food.servingUnit}</span>
                       </div>
                     </div>
                   </div>
@@ -556,112 +809,6 @@ export default function FoodLookupTab({
             })
           )}
         </div>
-
-        {/* Selected Food Detail Card & Portion Calculator */}
-        {selectedFood && (
-          <div className="mt-4 p-4 bg-gradient-to-r from-emerald-50 to-teal-50/60 rounded-xl border border-emerald-300 space-y-3 animate-in slide-in-from-bottom-2">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-emerald-200/60 pb-3">
-              <div className="flex items-center gap-2.5">
-                <span className="text-3xl">{selectedFood.emoji || '🍽️'}</span>
-                <div>
-                  <h3 className="text-base font-bold text-slate-800">{selectedFood.name}</h3>
-                  <p className="text-xs text-slate-500">
-                    {selectedFood.description || `Định lượng chuẩn: 1 ${selectedFood.servingUnit}`}
-                  </p>
-                </div>
-              </div>
-
-              <div className="text-right">
-                <span className="text-xs text-slate-500 font-medium">Tổng calo khẩu phần:</span>
-                <div className="text-2xl font-black text-emerald-700">
-                  {Math.round(selectedFood.calories * (Number(portionMultiplier) || 1))}{' '}
-                  <span className="text-xs font-normal text-slate-500">kcal</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Portion Adjuster */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-slate-700">Điều chỉnh khẩu phần:</span>
-                <div className="flex items-center gap-1">
-                  {[0.5, 1, 1.5, 2].map((num) => (
-                    <button
-                      key={num}
-                      type="button"
-                      onClick={() => setPortionMultiplier(num)}
-                      className={`px-2.5 py-1 text-xs rounded-lg font-bold transition-all ${
-                        portionMultiplier === num
-                          ? 'bg-emerald-600 text-white shadow-2xs'
-                          : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
-                      }`}
-                    >
-                      {num}
-                    </button>
-                  ))}
-                </div>
-
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0.1"
-                  value={portionMultiplier}
-                  onChange={(e) => setPortionMultiplier(e.target.value)}
-                  className="w-16 px-2 py-1 text-xs text-center bg-white border border-slate-200 rounded-lg font-bold focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                />
-                <span className="text-xs text-slate-600 font-medium">{selectedFood.servingUnit}</span>
-              </div>
-
-              {/* Dynamic Macro recalculation */}
-              <div className="flex items-center gap-3 text-xs">
-                <span className="text-sky-700 font-semibold">
-                  P: {Math.round(selectedFood.protein * (Number(portionMultiplier) || 1) * 10) / 10}g
-                </span>
-                <span className="text-amber-700 font-semibold">
-                  C: {Math.round(selectedFood.carbs * (Number(portionMultiplier) || 1) * 10) / 10}g
-                </span>
-                <span className="text-rose-700 font-semibold">
-                  F: {Math.round(selectedFood.fat * (Number(portionMultiplier) || 1) * 10) / 10}g
-                </span>
-              </div>
-            </div>
-
-            {/* Quick Add to Meal Diary (Tab 2) */}
-            <div className="pt-2 border-t border-emerald-200/60 flex flex-col sm:flex-row items-center justify-between gap-2">
-              <div className="flex items-center gap-2 w-full sm:w-auto">
-                <span className="text-xs text-slate-600 font-medium">Thêm vào thực đơn Tab 2:</span>
-                <select
-                  value={targetMealForFood}
-                  onChange={(e) => setTargetMealForFood(e.target.value)}
-                  className="px-2 py-1 text-xs bg-white border border-slate-200 rounded-lg font-semibold"
-                >
-                  <option value="breakfast">Bữa Sáng</option>
-                  <option value="lunch">Bữa Trưa</option>
-                  <option value="dinner">Bữa Tối</option>
-                  <option value="snacks">Bữa Phụ</option>
-                </select>
-              </div>
-
-              <button
-                onClick={handleAddSelectedFoodToDiary}
-                disabled={foodAddedToast}
-                className="w-full sm:w-auto px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5"
-              >
-                {foodAddedToast ? (
-                  <>
-                    <CheckCircle2 className="w-4 h-4 text-emerald-200" />
-                    <span>Đã thêm vào thực đơn!</span>
-                  </>
-                ) : (
-                  <>
-                    <Plus className="w-4 h-4" />
-                    <span>Thêm món này vào Nhật ký</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* CREATE CUSTOM FOOD MODAL */}
